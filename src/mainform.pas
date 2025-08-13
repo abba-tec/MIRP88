@@ -155,7 +155,7 @@ type
 
     public
       constructor Create(const fname: widestring);
-      destructor Destroy;
+      destructor Destroy; override;
       function GetType(const nbyte: byte):string;
       function CheckStartSequence : boolean;
       function GetInt(const i: integer): integer;
@@ -199,8 +199,8 @@ var
   midiopen: boolean = false;
   midipaused: boolean = true;
   llKeyboardHook: HHOOK = 0;
-  pianoKeys: array[0..60] of PianoKey;
-  pianoLabels: array[0..60] of TLabel;
+  pianoKeys: array[0..87] of PianoKey;
+  pianoLabels: array[0..87] of TLabel;
   remapMode: boolean = false;
   waitForKey: integer = -1;
   shiftDown: boolean = false;
@@ -218,12 +218,16 @@ var
   LevelDynamics: boolean = false;
   Sustain: boolean = false;
 
-  Layout: array[0..60] of char = (
+  Layout: array[0..87] of string = (
+  '^1','^2','^3',
+  '^4','^5','^6','^7','^8','^9','^0','^q','^w','^e','^r','^t',
   '1','!','2','@','3','4','$','5','%','6','^','7',
   '8','*','9','(','0','q','Q','w','W','e','E','r',
   't','T','y','Y','u','i','I','o','O','p','P','a',
   's','S','d','D','f','g','G','h','H','j','J','k',
-  'l','L','z','Z','x','c','C','v','V','b','B','n', 'm');
+  'l','L','z','Z','x','c','C','v','V','b','B','n',
+  'm','^y','^u','^i','^o','^p','^a','^s','^d','^f','^g','^h',
+  '^j');
 
   //TRANSLATIONS
   TRLastNote: string = 'Last played note number: ';
@@ -313,6 +317,7 @@ var
   n: integer;
   nbytes: array of byte;
 begin
+  SetLength(nbytes, 0);
   for n:=itr to itr+i-1 do
   begin
     SetLength(nbytes, Length(nbytes)+1);
@@ -358,6 +363,7 @@ begin
   end;
   ReadText := s;
 end;
+{$HINTS OFF}
 function MidiFile.ReadMidiMetaEvent(const deltaT: integer):boolean;
 var
   ntype: byte;
@@ -389,6 +395,8 @@ begin
   else itr := itr+nlength;
   ReadMidiMetaEvent := true;
 end;
+{$HINTS ON}
+{$HINTS OFF}
 procedure MidiFile.ReadVoiceEvent(const deltaT: integer);
 var
   ntype: integer;
@@ -460,6 +468,7 @@ begin
     itr := itr+2;
   end;
 end;
+{$HINTS ON}
 procedure MidiFile.ReadMidiTrackEvent(const nlength: integer);
 var
   start, deltaT: integer;
@@ -530,6 +539,7 @@ begin
     end;
   end;
 end;
+{$HINTS ON}
 procedure TriggerChanges;
 begin
   if not layoutChanged then
@@ -592,6 +602,7 @@ function GetLocaleInformation(Flag: integer): string;
 var
   pcLCA: array[0..20] of char;
 begin
+  FillChar(pcLCA, SizeOf(pcLCA), 0);
   if (GetLocaleInfo(LOCALE_SYSTEM_DEFAULT, Flag, pcLCA, 19) <= 0) then
   begin
     pcLCA[0] := #0;
@@ -680,8 +691,8 @@ var
   pressValue: byte;
 begin
   pressValue := Ord(charIn);
-  IsShifted := false;
-  if ((pressValue >= 65) and (pressValue <= 90)) or (AnsiContainsStr(')!@#$%^&*(', charIn)) then IsShifted := true;
+  Result := false;
+  if ((pressValue >= 65) and (pressValue <= 90)) or (AnsiContainsStr(')!@#$%&*(', charIn)) then Result := true;
 end;
 function GetKeyValue(const charIn: char):byte;
 var
@@ -747,36 +758,62 @@ begin
 end;
 function PressKey(ptrIn: pointer):ptrint;
 var
-  intIn, keyNum: integer;
+  intIn: integer;
 begin
+  {$HINTS OFF}
   intIn := PtrInt(ptrIn);
+  {$HINTS ON}
   //ShowMessage(IntToStr(intIn));
   pianoKeys[intIn].Brush.Color := clLtGray;
   Sleep(200);
-  keyNum := intIn mod 12;
   if pianoKeys[intIn].black then
     pianoKeys[intIn].Brush.Color := clBlack
   else
     pianoKeys[intIn].Brush.Color := clWhite;
+  Result := 0;
 end;
 procedure PressLetter(const charIn: byte);
 var
+  keyString: string;
+  hasCtrl, hasShift: boolean;
+  keyChar: char;
   kv: byte;
 begin
-  if Layout[charIn] <> ' ' then
-  begin
-    kv := GetKeyValue(Layout[charIn]);
-    if (IsShifted(Layout[charIn])) then keybd_event(160, MapVirtualKey(160, 0), 0, 0);
-    keybd_event(kv, MapVirtualKey(kv, 0), 0, 0);
-    keybd_event(kv, MapVirtualKey(kv, 0), 2, 0);
-    if (IsShifted(Layout[charIn])) then keybd_event(160, MapVirtualKey(160, 0), 2, 0);
-  end;
+  if (charIn >= Length(Layout)) or (Layout[charIn] = '') or (Layout[charIn] = ' ') then Exit;
+
+  keyString := Layout[charIn];
+  hasCtrl := keyString[1] = '^';
+  if hasCtrl then
+    Delete(keyString, 1, 1);
+
+  if keyString = '' then Exit;
+
+  keyChar := keyString[1];
+  hasShift := IsShifted(keyChar);
+  kv := GetKeyValue(keyChar);
+
+  if kv = 0 then Exit;
+
+  if hasCtrl then
+    keybd_event(VK_CONTROL, MapVirtualKey(VK_CONTROL, 0), 0, 0);
+  if hasShift then
+    keybd_event(VK_SHIFT, MapVirtualKey(VK_SHIFT, 0), 0, 0);
+
+  keybd_event(kv, MapVirtualKey(kv, 0), 0, 0);
+  keybd_event(kv, MapVirtualKey(kv, 0), KEYEVENTF_KEYUP, 0);
+
+  if hasShift then
+    keybd_event(VK_SHIFT, MapVirtualKey(VK_SHIFT, 0), KEYEVENTF_KEYUP, 0);
+  if hasCtrl then
+    keybd_event(VK_CONTROL, MapVirtualKey(VK_CONTROL, 0), KEYEVENTF_KEYUP, 0);
+
   if (FMain.KeyboardCheck.Checked) and (remapMode = false) then
   begin
-    BeginThread(@PressKey, Pointer(charIn));
+    BeginThread(@PressKey, Pointer(PtrInt(charIn)));
   end;
 end;
 
+{$HINTS OFF}
 procedure DoMidiInData(aMidiInHandle: PHMIDIIN; aMsg: Integer; aInstance, aMidiData, aTimeStamp: integer); stdcall;
 var
   channel: byte;
@@ -791,7 +828,7 @@ begin
     velocity := (aMidiData and $00FF0000) shr 16;
     if (channel >= 144) and (channel <= 146) and (velocity > Threshold) then
     begin
-      playedKey := key-36;
+      playedKey := key-21;
       //ShowMessage(IntToStr(playedKey));
       if Mute then
       begin
@@ -823,7 +860,8 @@ begin
     end;
   end;
 end;
-procedure DoMIDITimer(TimeID, Msg: UINT; dwUser, dw1, dw2: DWORD); stdcall;
+{$HINTS OFF}
+procedure DoMIDITimer(TimeID, Msg: UINT; dwUser, dw1, dw2: DWORD_PTR); stdcall;
 var
   tempo: double;
   playedKey: integer;
@@ -842,7 +880,7 @@ begin
         midiOutShortMsg(OutputDevice, $90 +
         (Clamp(key+Tune, 0, 127) shl 8)+
         (velocity shl 16));
-        playedKey := key-36;
+        playedKey := key-21;
         if (velocity > Threshold) and (not remapMode) then
         begin
           if Mute then
@@ -889,7 +927,7 @@ begin
           midiOutShortMsg(OutputDevice, $90 +
           (Clamp(key+Tune, 0, 127) shl 8)+
           (velocity shl 16));
-          playedKey := key-36;
+          playedKey := key-21;
           if (velocity > Threshold) and (not remapMode) then
           begin
             if Mute then
@@ -940,6 +978,7 @@ begin
   end;
   timeScale := timeScale + tempo;
 end;
+{$HINTS ON}
 procedure OpenMIDI(const fname: widestring);
 begin
   midi := MidiFile.Create(fname);
@@ -988,14 +1027,17 @@ begin
     FMain.MIDIProgress.Position := Round(timeScale/100);
   end;
 end;
-function LowLevelKeyboardHook(nCode: Integer; wParam: WPARAM; lParam: LPARAM): HRESULT; stdcall;
+function LowLevelKeyboardHook(nCode: Integer; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall;
 var
   pkbhs: PKBDLLHOOKSTRUCT;
   VirtualKey: integer;
   Key: char;
 begin
-  pkbhs := PKBDLLHOOKSTRUCT(Pointer(lParam));
+  {$HINTS OFF}
+  pkbhs := PKBDLLHOOKSTRUCT(lParam);
+  {$HINTS ON}
   if nCode = HC_ACTION then
+  begin
     VirtualKey := pkbhs^.vkCode;
     if wParam = WM_KEYDOWN then
     begin
@@ -1052,7 +1094,10 @@ begin
         VK_LSHIFT: shiftDown:=false;
       end;
     end;
+  end;
+  {$HINTS OFF}
   Result := CallNextHookEx(llKeyboardHook, nCode, wParam, lParam);
+  {$HINTS ON}
 end;
 procedure TFMain.ResizeKeys(Sender: TObject);
 var
@@ -1097,7 +1142,21 @@ end;
 procedure TFMain.FormCreate(Sender: TObject);
 var
   i, keyNum: integer;
+  procedure ClearShortcuts(MenuItem: TMenuItem);
+  var
+    j: integer;
+  begin
+    if MenuItem = nil then Exit;
+    MenuItem.ShortCut := 0;
+    for j := 0 to MenuItem.Count - 1 do
+    begin
+      ClearShortcuts(MenuItem.Items[j]);
+    end;
+  end;
 begin
+  for i := 0 to TopMenu.Items.Count - 1 do
+    ClearShortcuts(TopMenu.Items[i]);
+
   SetPriorityClass(GetCurrentProcess, $8000);
   //Translate;
   Inputs := TStringList.Create;
@@ -1185,9 +1244,17 @@ begin
     Reset(charFile);
     for i:=0 to Length(Layout)-1 do
     begin
-      ReadLn(charFile, charRead);
-      Layout[i] := charRead[1];
-      pianoLabels[i].Caption := charRead[1];
+      if not EOF(charFile) then
+      begin
+        ReadLn(charFile, charRead);
+        Layout[i] := charRead;
+        pianoLabels[i].Caption := charRead;
+      end
+      else
+      begin
+        Layout[i] := '';
+        pianoLabels[i].Caption := '';
+      end;
     end;
     CloseFile(charFile);
   end;
@@ -1204,7 +1271,7 @@ begin
   begin
     StopMIDI;
     if midiopen then midi.Destroy;
-    OpenMIDI(OpenMIDIDialog.FileName);
+    OpenMIDI(WideString(OpenMIDIDialog.FileName));
   end;
 end;
 
@@ -1230,7 +1297,7 @@ end;
 procedure TFMain.EditShiftDownClick(Sender: TObject);
 var
   i: integer;
-  c: char;
+  c: string;
 begin
   c := Layout[0];
   for i:=0 to Length(Layout)-2 do
@@ -1248,7 +1315,7 @@ end;
 procedure TFMain.EditShiftUpClick(Sender: TObject);
 var
   i: integer;
-  c: char;
+  c: string;
 begin
   c := Layout[Length(Layout)-1];
   for i:=Length(Layout)-1 downto 1 do
@@ -1326,7 +1393,9 @@ begin
   InputIndex := InputPorts.ItemIndex;
   if midiInGetNumDevs > 0 then
   begin
-    midiInOpen(@InputDevice, InputIndex, Cardinal(@DoMidiInData), InputIndex, CALLBACK_FUNCTION);
+    {$HINTS OFF}
+    midiInOpen(@InputDevice, InputIndex, PtrUInt(@DoMidiInData), InputIndex, CALLBACK_FUNCTION);
+    {$HINTS ON}
     //midiInPrepareHeader(InputDevice, @InputHDR, SizeOf(TMIDIHDR));
     //midiInAddBuffer(InputDevice, @InputHDR, SizeOf(TMIDIHDR));
     midiInStart(InputDevice);
@@ -1503,4 +1572,3 @@ end;
 {$R *.lfm}
 
 end.
-
